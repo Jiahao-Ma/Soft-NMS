@@ -25,7 +25,7 @@ def soft_nms(boxes, num_classes, conf_thres=0.5, sigma=0.5, nms_thres=0.001):
         (1) [batch_size, all_anchors, 5 + num_classes] -> [batch_size, all_anchors, 4 + 1 + 2]
         (2) 遍历每一张图片
         (3) 去除 pred < conf_thres 的框, 合成 [batch_size, all_anchors, 4 + 1 + 2]
-        (4) 遍历 unique classes, 对 class_conf 排序, 对 同类的框 求 ious, 去除重合度比较高的框
+        (4) 遍历 unique classes, 对 class_conf 排序, 对 同类的框 求 ious, 通过 衰减函数(高斯) 对 改变置信度
     """
     # x, y, w, h -> x1, y1, x2, y2
     shape_box = boxes[:, :, :4]
@@ -55,6 +55,7 @@ def soft_nms(boxes, num_classes, conf_thres=0.5, sigma=0.5, nms_thres=0.001):
         unique_class = np.unique(detections[:, -1])
         if len(unique_class) == 0:
             continue
+        # 仅仅对这张图片的这个类进行操作， 等效于下面的 single_class_softnms() 函数
         for cls in unique_class:
             cls_mask = detections[:, -1] == cls
             detection = detections[cls_mask]
@@ -68,19 +69,23 @@ def soft_nms(boxes, num_classes, conf_thres=0.5, sigma=0.5, nms_thres=0.001):
                 if detection.shape[0] == 1:
                     break
                 ious = ious(best_boxes[-1], detection[1:])
+                # 衰减函数 改变置信度， 然后重新排列
                 detection[1:, 4] = np.exp(ious * ious / sigma) * detection[1:, 4]
                 detection = detection[1:]
                 conf_index = np.argsort(detections[:, 4])[::-1]
                 detection = detection[conf_index]
             # [anchors_num, x1,y1,x2,y2,pred,class_conf,class_pred]
             best_boxes = np.array(best_boxes)
+            # 对于小于 nms_thres 的 直接排除
             keep = best_boxes[:, 4] > nms_thres
             best_boxes = best_boxes[keep]
             output.append(best_boxes)
     return output
 
+# 单类的 soft nms 效果对与 official_soft_nms.py test() 一致
 def single_class_softnms(boxes, boxscores, sigma=0.5, thresh=0.001):
     N = boxes.shape[0]
+    # detection: x1 y1 x2 y2 pred_score index 这个index为了后面保留和排序部分更好地展示
     detection = np.concatenate([boxes, boxscores.reshape(-1, 1), np.arange(0, N).reshape(N,1)], axis=1)
     conf_indx = np.argsort(detection[:, 4])[::-1]
     detection = detection[conf_indx]
